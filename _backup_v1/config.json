@@ -1,0 +1,26 @@
+{
+  "port": 3000,
+  "storage": "mysql",
+  "storageFile": "./data/store.json",
+  "adminDemoKey": "change-me-local-demo",
+  "paymentMode": "mock",
+  "paypal": {
+    "clientId": "",
+    "clientSecret": "",
+    "webhookId": ""
+  },
+  "firebase": {
+    "enabled": false
+  },
+  "maps": {
+    "enabled": false,
+    "apiKey": ""
+  },
+  "mysql": {
+    "host": "localhost",
+    "port": 3306,
+    "database": "untaxpoint",
+    "user": "root",
+    "password": ""
+  }
+}
