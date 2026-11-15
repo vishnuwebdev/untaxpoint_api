@@ -21,9 +21,23 @@ const config = require('../src/config');
   const applied = new Set(rows.map((r) => r.version));
   const dir = path.join(__dirname, '..', 'migrations');
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
+  // A database restored from a SQL dump already has the tables of earlier migrations, but no rows in
+  // schema_migrations. Re-running those files would fail ("table already exists"), so if a migration's
+  // objects are already there it is only recorded as applied.
+  const tableExists = async (t) => (await db.query(
+    'SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?', [database, t]))[0][0].n > 0;
+  const alreadyInDb = {
+    '001_schema_v2.sql': () => tableExists('audit_logs'),
+    '002_mobile_app.sql': () => tableExists('notifications'),
+  };
   let count = 0;
   for (const file of files) {
     if (applied.has(file)) continue;
+    if (alreadyInDb[file] && (await alreadyInDb[file]())) {
+      await db.query('INSERT INTO schema_migrations (version) VALUES (?)', [file]);
+      console.log(`${file} is already in the database - marked as applied`);
+      continue;
+    }
     process.stdout.write(`Applying ${file} ... `);
     try {
       await db.query(fs.readFileSync(path.join(dir, file), 'utf8'));
