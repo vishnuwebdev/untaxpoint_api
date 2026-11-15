@@ -25,12 +25,21 @@ const config = {
   paymentProvider: env.PAYMENT_PROVIDER || 'mock',
   jobIntervalSeconds: int(env.JOB_INTERVAL_SECONDS, 60),
   jobsEnabled: env.JOBS_ENABLED !== 'false',
+  push: {
+    // Absolute path to the Firebase service-account JSON. Empty = push notifications off.
+    serviceAccountFile: env.FIREBASE_SERVICE_ACCOUNT ? path.resolve(__dirname, '..', env.FIREBASE_SERVICE_ACCOUNT) : '',
+    intervalSeconds: int(env.PUSH_INTERVAL_SECONDS, 3),
+  },
   // 'mock' trusts the email sent by the app for Google/Apple sign-in (local testing only).
   socialAuthMode: env.SOCIAL_AUTH_MODE || 'mock',
   // In development, verification/reset codes are returned in the API response (no email service yet).
   exposeDevCodes: env.EXPOSE_DEV_CODES ? env.EXPOSE_DEV_CODES === 'true' : (env.NODE_ENV || 'development') !== 'production',
   inviteBaseUrl: (env.INVITE_BASE_URL || 'https://untaxpoint.app/invite').replace(/\/$/, ''),
   appVersion: env.APP_VERSION || '1.0.0',
+  maps: {
+    // Google Routes API key used by GET /api/v1/directions (restrict it to this server's IP).
+    serverKey: env.GOOGLE_MAPS_SERVER_KEY || '',
+  },
 };
 
 if (config.env === 'production' && config.socialAuthMode === 'mock') {

@@ -160,6 +160,7 @@ async function deleteAccount(req, body) {
     await q(`UPDATE users SET status='deleted', full_name='Deleted member', email=?, phone=NULL, avatar_url=NULL, password_hash=NULL,
       provider_subject=NULL, last_latitude=NULL, last_longitude=NULL, last_location_at=NULL WHERE id=?`, [`deleted+${u.id}@untaxpoint.invalid`, u.id], conn);
     await q('DELETE FROM user_payout_accounts WHERE user_id=?', [u.id], conn);
+    await q('DELETE FROM device_tokens WHERE user_id=?', [u.id], conn); // no more push to this account
     await q("UPDATE refresh_tokens SET revoked_at=UTC_TIMESTAMP(3) WHERE subject_type='user' AND subject_id=? AND revoked_at IS NULL", [u.id], conn);
     await audit(conn, { actorType: 'user', actorId: u.id, action: 'account_deleted', targetType: 'user', targetId: u.id, ip: req.ip });
     return { deleted: true };

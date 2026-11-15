@@ -2,6 +2,7 @@ const config = require('./src/config');
 const { createApp } = require('./src/app');
 const { pool } = require('./src/db');
 const scheduler = require('./src/jobs/scheduler');
+const push = require('./src/services/push');
 
 const app = createApp();
 
@@ -16,5 +17,6 @@ app.listen(config.port, async () => {
   if (config.jobsEnabled) {
     scheduler.start(config.jobIntervalSeconds);
     console.log(`Jobs: settlement check every ${config.jobIntervalSeconds}s`);
+    push.start(config.push.intervalSeconds);
   }
 });

@@ -11,6 +11,8 @@ const participation = require('../services/participation');
 const finance = require('../services/finance');
 const accounts = require('../services/accounts');
 const notifications = require('../services/notifications');
+const push = require('../services/push');
+const directions = require('../services/directions');
 const multer = require('multer');
 const { badRequest } = require('../lib/errors');
 
@@ -68,6 +70,18 @@ r.get('/me/notifications/unread-count', requireUser, ah(async (req, res) => ok(r
 r.post('/me/notifications/read-all', requireUser, ah(async (req, res) => ok(res, await notifications.markRead(req.user.id, 'all'))));
 r.post('/me/notifications/:id/read', requireUser, ah(async (req, res) => ok(res, await notifications.markRead(req.user.id, Number(req.params.id) || 0))));
 
+// Push notification devices (Firebase Cloud Messaging tokens)
+const deviceSchema = z.object({
+  token: z.string().trim().min(20).max(512),
+  platform: z.enum(['android', 'ios', 'web']),
+  appVersion: z.string().trim().max(32).optional(),
+});
+r.post('/me/devices', requireUser, ah(async (req, res) => ok(res, await push.registerDevice(req.user.id, parse(deviceSchema, req.body)))));
+r.delete('/me/devices', requireUser, ah(async (req, res) => {
+  const { token } = parse(z.object({ token: z.string().trim().min(20).max(512) }), req.body);
+  ok(res, await push.unregisterDevice(req.user.id, token));
+}));
+
 // ------------------------------------------------------------------ events
 const listSchema = z.object({
   lat: z.coerce.number().min(-90).max(90).optional(),
@@ -108,5 +122,9 @@ r.get('/me/donations', requireUser, ah(async (req, res) => {
   const { items, total } = await finance.userTransactions(req.user.id, p, 'donation');
   ok(res, items, pageMeta(p, total));
 }));
+
+// ------------------------------------------------------------------ in-app directions (Google Routes API via server)
+const directionsLimiter = rateLimit({ windowMs: 60 * 1000, limit: 20, keyGenerator: (req) => req.user.id, standardHeaders: true, legacyHeaders: false });
+r.get('/directions', requireUser, directionsLimiter, ah(async (req, res) => ok(res, await directions.route(req.query))));
 
 module.exports = r;
