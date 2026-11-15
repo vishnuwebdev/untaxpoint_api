@@ -84,7 +84,11 @@ const baseFields = {
 };
 const createSchema = z.object({ ...baseFields, publish: z.boolean().default(false) });
 const updateSchema = z.object(Object.fromEntries(Object.entries(baseFields).map(([k, v]) => [k, v.optional()])));
-const COMMITTED_FIELDS = ['latitude', 'longitude', 'radiusMeters', 'poolAmount', 'maxWinners', 'startsAt', 'endsAt', 'timezone'];
+// Locked once the event has started or has participants.
+const COMMITTED_FIELDS = ['poolAmount', 'maxWinners', 'startsAt', 'endsAt', 'timezone'];
+// Location can still be changed while the event is live (admin decision, 15 Nov 2026).
+// Entries already accepted stay valid; new entries are checked against the new location.
+const LOCATION_FIELDS = ['latitude', 'longitude', 'radiusMeters'];
 
 function statusOnPublish(startsAt, now = new Date()) {
   return startsAt <= now ? 'active' : 'scheduled';
@@ -136,7 +140,11 @@ async function updateEvent(req, id, body) {
     const touchesCommitted = COMMITTED_FIELDS.some((f) => input[f] !== undefined);
     const started = new Date() >= ev.starts_at && ev.status !== 'draft';
     if (touchesCommitted && (ev.participants_count > 0 || started)) {
-      throw conflict('event_committed', 'Location, prize, winners and timing cannot change after the event has started or has participants. You can still edit the title, description and address.');
+      throw conflict('event_committed', 'Prize, winners and timing cannot change after the event has started or has participants. You can still edit the location, title, description and address.');
+    }
+    const touchesLocation = LOCATION_FIELDS.some((f) => input[f] !== undefined);
+    if (touchesLocation && started && new Date() >= ev.ends_at) {
+      throw conflict('event_ended', 'This event has already ended, so its location can no longer change');
     }
     const next = {
       title: input.title ?? ev.title,
@@ -169,7 +177,17 @@ async function updateEvent(req, id, body) {
       starts_at=?, ends_at=?, timezone=?, status=? WHERE id=?`,
     [next.title, next.description, next.address, next.latitude, next.longitude, next.radius_meters, next.pool_cents, next.max_winners,
       next.starts_at, next.ends_at, next.timezone, status, id], conn);
-    await adminAudit(conn, req, 'event_updated', 'event', id, { fields: Object.keys(input), poolDeltaCents: delta || undefined });
+    const locationChanged = next.latitude !== Number(ev.latitude) || next.longitude !== Number(ev.longitude)
+      || next.radius_meters !== ev.radius_meters;
+    await adminAudit(conn, req, 'event_updated', 'event', id, {
+      fields: Object.keys(input),
+      poolDeltaCents: delta || undefined,
+      location: locationChanged ? {
+        from: { latitude: Number(ev.latitude), longitude: Number(ev.longitude), radiusMeters: ev.radius_meters },
+        to: { latitude: next.latitude, longitude: next.longitude, radiusMeters: next.radius_meters },
+        whileLive: started || ev.participants_count > 0,
+      } : undefined,
+    });
     const row = await one('SELECT * FROM events WHERE id=?', [id], conn);
     return serialize(row, (await imagesFor([id], conn))[id] || []);
   });

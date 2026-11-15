@@ -169,6 +169,11 @@ test('participation validation records rejections', async () => {
   const locked = await api('PATCH', `/api/v1/admin/events/${ev.id}`, { token: adminToken, body: { poolAmount: '20' } });
   assert.equal(locked.error.code, 'event_committed');
   assert.equal((await api('PATCH', `/api/v1/admin/events/${ev.id}`, { token: adminToken, body: { title: 'Renamed' } })).status, 200);
+  // Location can still change while the event is live with entries.
+  const moved = await api('PATCH', `/api/v1/admin/events/${ev.id}`, { token: adminToken, body: { latitude: 40.7590, longitude: -73.9850, radiusMeters: 150 } });
+  assert.equal(moved.status, 200);
+  assert.equal(moved.data.radiusMeters, 150);
+  await api('PATCH', `/api/v1/admin/events/${ev.id}`, { token: adminToken, body: { latitude: 40.758, longitude: -73.9855, radiusMeters: 250 } });
   assert.equal((await api('POST', `/api/v1/admin/events/${ev.id}/cancel`, { token: adminToken })).error.code, 'event_has_participants');
 
   // Paused events refuse entries; resuming restores them.
