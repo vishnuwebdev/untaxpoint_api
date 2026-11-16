@@ -84,14 +84,23 @@ async function sendToDevice(deviceToken, n, unread) {
     android: { priority: 'HIGH', notification: { sound: 'default' } },
     apns: { payload: { aps: { sound: 'default', badge: unread } } },
   };
+  let bearer;
+  try {
+    bearer = await accessToken();
+  } catch (err) {
+    // Google refused the service-account login (wrong/revoked key, server clock wrong, no internet).
+    logOnce(`Push: cannot get a Google access token – ${err.message}. Check the key, the server clock (timedatectl) and outbound internet.`);
+    return 'retry';
+  }
   let res;
   try {
     res = await fetch(`https://fcm.googleapis.com/v1/projects/${loadAccount().project_id}/messages:send`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${await accessToken()}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ message }),
     });
-  } catch {
+  } catch (err) {
+    logOnce(`Push: cannot reach fcm.googleapis.com – ${err.message}`);
     return 'retry'; // network problem
   }
   if (res.ok) return 'ok';
@@ -100,7 +109,10 @@ async function sendToDevice(deviceToken, n, unread) {
   if (res.status === 404 || details.includes('UNREGISTERED')) return 'invalid_token';
   if (res.status === 400 && details.includes('INVALID_ARGUMENT') && /registration token/i.test(err.error?.message || '')) return 'invalid_token';
   if (res.status === 401) cachedToken = null; // token expired early: fetch a new one next time
-  if (res.status === 429 || res.status >= 500 || res.status === 401) return 'retry';
+  if (res.status === 429 || res.status >= 500 || res.status === 401) {
+    logOnce(`Push: FCM temporary error ${res.status} ${err.error?.status || ''}: ${err.error?.message || ''}`);
+    return 'retry';
+  }
   console.error(`Push: FCM rejected notification ${n.id} (${res.status} ${err.error?.status || ''}: ${err.error?.message || ''})`);
   return 'ok'; // permanent problem with this message: don't retry
 }
@@ -115,6 +127,15 @@ async function pool(items, limit, fn) {
     }
   });
   await Promise.all(workers);
+}
+
+/** Log a problem once per minute (the worker runs every few seconds). */
+const lastLogged = new Map();
+function logOnce(msg) {
+  const now = Date.now();
+  if ((lastLogged.get(msg) || 0) > now - 60_000) return;
+  lastLogged.set(msg, now);
+  console.error(msg);
 }
 
 let running = false;
@@ -155,6 +176,8 @@ async function processPending() {
 
     const jobs = [];
     for (const n of toSend) for (const t of byUser.get(n.user_id) || []) jobs.push({ n, t });
+    const noDevice = toSend.filter((n) => !byUser.has(n.user_id)).length;
+    if (noDevice) console.log(`[push] ${noDevice} notification(s) skipped: member has no registered device (no FCM token saved)`);
     const retry = new Set();
     const invalid = new Set();
     let sent = 0;
@@ -170,6 +193,8 @@ async function processPending() {
       await q(`DELETE FROM device_tokens WHERE token IN (${list.map(() => '?').join(',')})`, list);
     }
     const again = toSend.filter((n) => retry.has(n.id) && n.push_attempts + 1 < MAX_ATTEMPTS).map((n) => n.id);
+    const gaveUp = toSend.filter((n) => retry.has(n.id) && n.push_attempts + 1 >= MAX_ATTEMPTS).length;
+    if (gaveUp) console.error(`[push] gave up on ${gaveUp} notification(s) after ${MAX_ATTEMPTS} attempts (see the errors above)`);
     if (again.length) {
       await q(`UPDATE notifications SET pushed_at=NULL, push_attempts=push_attempts+1 WHERE id IN (${again.map(() => '?').join(',')})`, again);
     }
@@ -199,6 +224,10 @@ async function unregisterDevice(userId, token) {
 }
 
 function start(intervalSeconds) {
+  if (typeof fetch !== 'function') {
+    console.error(`Push: OFF – Node ${process.version} has no built-in fetch. Use Node 18 or newer (nvm install 20 && nvm use 20, then restart PM2).`);
+    return null;
+  }
   if (enabled()) console.log(`Push: on (Firebase project ${loadAccount().project_id}), checking every ${intervalSeconds}s`);
   else console.log('Push: off (set FIREBASE_SERVICE_ACCOUNT in .env to turn it on)');
   processPending();
